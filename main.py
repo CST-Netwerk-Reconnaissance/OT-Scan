@@ -18,7 +18,7 @@ def print_welcome_message():
     print(Fore.GREEN + "[INFO] Kies een optie uit het onderstaande menu")
 
 def run_nmap_scan(target):
-    """Voert een voorzichtige Nmap-scan uit op het opgegeven doel."""
+    """Voert een voorzichtige Nmap-scan uit op het opgegeven netwerk ip."""
     try:
         print(Fore.CYAN + f"[*] Voer een langzame Nmap-scan uit op {target}...")
         result = subprocess.run(["nmap", "-sS", "-T1", "--scan-delay", "5s", target], capture_output=True, text=True, check=True)
