@@ -1,110 +1,191 @@
-import argparse
-import openai
 import subprocess
+import platform
 import os
 import sys
 import colorama
+import webbrowser
 from colorama import Fore
-import pyfiglet
 
 # Initialiseer colorama
 colorama.init(autoreset=True)
 
-def print_welcome_message():
-    """Print een ASCII-titel en kleurrijke welkomstboodschap."""
-    ascii_title = pyfiglet.figlet_format("REC-OT", font="slant")
-    print(Fore.CYAN + ascii_title)
-    print(Fore.YELLOW + "Welkom bij de OT Netwerk Tool 🚀✨")
-    print(Fore.GREEN + "[INFO] Kies een optie uit het onderstaande menu")
+# def print_welcome_message():
+#     """Print een hardcoded ASCII-titel en kleurrijke welkomstboodschap."""
+#     ascii_title = """
+#   ____  _____ ____       ___ _____ 
+#  |  _ \| ____/ ___|     / _ \_   _|
+#  | |_) |  _|| |   _____| | | || |  
+#  |  _ <| |__| |__|_____| |_| || |  
+#  |_| \_\_____\____|     \___/ |_|  
+                                   
+#     """
+#     print(Fore.CYAN + ascii_title)
+#     print(Fore.YELLOW + "Welkom bij de OT Netwerk Tool 🚀✨")
+#     print(Fore.GREEN + "[INFO] Kies een optie uit het onderstaande menu")
 
-def run_nmap_scan(target):
-    """Voert een voorzichtige Nmap-scan uit op het opgegeven netwerk ip."""
+def is_installed(command):
+    """Controleer of een programma geïnstalleerd is."""
     try:
-        print(Fore.CYAN + f"[*] Voer een langzame Nmap-scan uit op {target}...")
-        result = subprocess.run(["nmap", "-sS", "-T1", "--scan-delay", "5s", target], capture_output=True, text=True, check=True)
-        return result.stdout
+        subprocess.run([command, "--version"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        return True
     except FileNotFoundError:
-        return Fore.RED + "[ERROR] Nmap is niet geïnstalleerd of niet in PATH."
-    except subprocess.CalledProcessError as e:
-        return Fore.RED + f"[ERROR] Nmap scan mislukt: {e}"
+        return False
+    except subprocess.CalledProcessError:
+        return False
 
-def analyze_pcap(pcap_file):
-    """Analyseert een PCAP-bestand met Tshark."""
-    if not os.path.exists(pcap_file):
-        return Fore.RED + "[ERROR] PCAP-bestand niet gevonden."
+def install_linux_tools():
+    """Installeer Nmap en Tshark op Linux via APT/YUM."""
     try:
-        print(Fore.CYAN + f"[*] Analyseren van PCAP-bestand: {pcap_file}...")
-        result = subprocess.run(["tshark", "-r", pcap_file], capture_output=True, text=True, check=True)
-        return result.stdout[:1000]  # Beperk uitvoer voor leesbaarheid
-    except FileNotFoundError:
-        return Fore.RED + "[ERROR] Tshark is niet geïnstalleerd of niet in PATH."
-    except subprocess.CalledProcessError as e:
-        return Fore.RED + f"[ERROR] PCAP-analyse mislukt: {e}"
+        if os.path.exists("/usr/bin/apt-get"):
+            subprocess.run(["sudo", "apt-get", "update"], check=True)
+            subprocess.run(["sudo", "apt-get", "install", "-y", "nmap", "tshark"], check=True)
+        elif os.path.exists("/usr/bin/yum"):
+            subprocess.run(["sudo", "yum", "install", "-y", "nmap", "wireshark"], check=True)
+        print(Fore.GREEN + "✅ Installatie voltooid!")
+    except Exception as e:
+        print(Fore.RED + f"❌ Installatie mislukt: {e}")
 
-def chatgpt_analysis(prompt, api_key):
-    """Genereert een AI-ondersteunde analyse via OpenAI."""
-    if not api_key:
-        return Fore.RED + "[ERROR] OpenAI API-key ontbreekt."
-    try:
-        openai.api_key = api_key
-        response = openai.ChatCompletion.create(
-            model="gpt-4o",
-            messages=[{"role": "system", "content": "Je helpt bij netwerkbeveiligingsanalyses."},
-                      {"role": "user", "content": prompt}]
-        )
-        return response["choices"][0]["message"]["content"]
-    except openai.error.OpenAIError as e:
-        return Fore.RED + f"[ERROR] AI-analyse mislukt: {e}"
+def check_tools():
+    """Controleert of Nmap en Tshark geïnstalleerd zijn en vraagt of de gebruiker ze wil installeren."""
+    nmap_installed = is_installed("nmap")
+    tshark_installed = is_installed("tshark")
+
+    if nmap_installed and tshark_installed:
+        print(Fore.GREEN + "✅ Nmap en Tshark zijn al geïnstalleerd!")
+    else:
+        print(Fore.RED + "⚠️ Nmap of Tshark ontbreekt op dit systeem.")
+        keuze = input(Fore.CYAN + "❓ Wil je deze installeren? (ja/nee): ").strip().lower()
+        if keuze == "ja":
+            install_linux_tools()
+        else:
+            print(Fore.RED + "⚠️ Installatie overgeslagen.")
 
 def show_kibana_dashboard():
-    """Link naar Kibana-dashboard."""
-    print("\n" + Fore.MAGENTA + "[INFO] Je kunt de resultaten visualiseren via Kibana op deze link:")
-    print(Fore.MAGENTA + "http://localhost:5601")  # Pas dit aan afhankelijk van je eigen setup
+    """Open Kibana-dashboard in de standaard webbrowser."""
+    url = "https://145.52.127.172/dashboards/app/dashboards#/view/0ad3d7c2-3441-485e-9dfe-dbb22e84e576"  # Pas deze link aan indien nodig
+    
+    print("\n" + Fore.GREEN + "[INFO] Kibana-dashboard wordt geopend in je browser...")
+    
+    webbrowser.open(url)  # Opent de URL in de standaard webbrowser
 
-def main():
-    print_welcome_message()
+def nmap_scan(target, agressiviteit):
+    """Voer een netwerk in kaart-brengende Nmap-scan uit op het opgegeven doel met verschillende agressiviteitsniveaus."""
+    print(Fore.CYAN+ f"Scannen van netwerk {target} voor actieve apparaten met agressiviteit: {agressiviteit}...")
 
+    # Bepaal de juiste Nmap-opdrachten op basis van de gekozen agressiviteit
+    if agressiviteit == "1":  # Zachte scan
+        nmap_command = ["nmap", "-sn", target]  # Ping-scan (geen poorten scannen)
+    elif agressiviteit == "2":  # Normale scan
+        nmap_command = ["nmap", "-sS", target]  # SYN-scan voor poorten
+    elif agressiviteit == "3":  # Agressieve scan
+        nmap_command = ["nmap", "-A", target]  # Agressieve scan (versie, OS-detectie, scripts)
+    elif agressiviteit == "4":  # Ultra agressieve scan
+        nmap_command = ["nmap", "-T4", "-A", "-p-", target]  # Versneld, alle poorten, agressief
+    else:
+        print(Fore.RED + "[ERROR] Ongeldige keuze voor agressiviteit.")
+        return
+
+    try:
+        result = subprocess.run(
+            nmap_command,  # Voer de gekozen Nmap-opdracht uit
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            text=True
+        )
+
+        # Toon de resultaten van de Nmap-scan
+        print(Fore.GREEN + result.stdout)
+
+    except subprocess.CalledProcessError as e:
+        print(Fore.RED + f"Fout bij het uitvoeren van Nmap: {e.stderr}")
+
+def display_menu():
+    ascii_title = """
+             ____  _____ ____       ___ _____ 
+            |  _ \| ____/ ___|     / _ \_   _|
+            | |_) |  _|| |   _____| | | || |  
+            |  _ <| |__| |__|_____| |_| || |  
+            |_| \_\_____\____|     \___/ |_|  
+                                   
+    """
+    print(Fore.CYAN + ascii_title)
+    print(Fore.CYAN + "Welkom bij de REC-OT 🚀")
+
+    """Toon het hoofdmenu."""
+    print(Fore.CYAN + "\n                       ")
+    print(Fore.CYAN + "Menu:")
+    print(Fore.CYAN + "                          ")
+    print(Fore.CYAN + "1. Breng netwerk in kaart met Nmap")
+    print(Fore.CYAN + "2. Analyseer een PCAP-bestand met Malcolm")
+    print(Fore.CYAN + "3. Toegang tot Kibana Dashboard")
+    print(Fore.CYAN + "4. Controleer Nmap & Tshark installatie")
+    print(Fore.RED + "5. Stop")
+
+def main_menu():
+    """Hoofdmenu voor de tool zonder elke keer opnieuw te printen."""
     while True:
-        print(Fore.YELLOW + "\n=======================")
-        print(Fore.GREEN + "OT Netwerk Tools Menu")
-        print(Fore.YELLOW + "=======================")
-        print(Fore.CYAN + "1. 🚀 Voer een Nmap-scan uit")
-        print(Fore.CYAN + "2. 📁 Analyseer een PCAP-bestand")
-        print(Fore.CYAN + "3. 🤖 Vraag AI om netwerkadvies")
-        print(Fore.CYAN + "4. 🌐 Toegang tot Kibana Dashboard")
-        print(Fore.RED + "5. ❌ Stop")
+        os.system("cls" if platform.system() == "Windows" else "clear")  # ✅ Scherm wissen vóór het menu
         
-        choice = input(Fore.WHITE + "\nMaak een keuze (1-5): ")
+        display_menu()  # ✅ Menu tonen bij eerste keer
+        
+        choice = input(Fore.CYAN + "\nMaak een keuze (1-6): ")
+
+        # if choice == "1":
+        #     target = input(Fore.YELLOW + "Voer het doel-IP in voor de Nmap-scan: ")
+        #     print(Fore.CYAN + f"[*] Simulatie: Nmap-scan op {target} (echte scan hier toevoegen)")
 
         if choice == "1":
-            target = input(Fore.YELLOW + "Voer het doel-IP in voor de Nmap-scan: ")
-            print(run_nmap_scan(target))
+            target = input(Fore.WHITE + "Voer het netwerk IP in voor de Nmap-scan (bijv. 192.168.1.0/24): ")
+            print(Fore.CYAN + "                          ")
+            print(Fore.CYAN + "1. Zachte scan (alleen actieve hosts)")
+            print(Fore.CYAN + "2. Normale scan (poorten scannen)")
+            print(Fore.CYAN + "3. Agressieve scan (OS-detectie, versies, scripts)")
+            print(Fore.CYAN + "4. Ultra agressieve scan (alle poorten, snel, gedetailleerd)")
+            print(Fore.CYAN + "                          ")
+            agressiviteit = input(Fore.WHITE + "Kies een agressiviteitsniveau (1-4): ")
+
+            nmap_scan(target, agressiviteit)  # Voer de Nmap-scan uit met het gekozen agressiviteitsniveau
 
         elif choice == "2":
-            pcap_file = input(Fore.YELLOW + "Voer het pad in naar het PCAP-bestand: ")
-            print(analyze_pcap(pcap_file))
+            pcap_file = input(Fore.WHITE + "Voer het pad in naar het PCAP-bestand: ")
+            print(Fore.CYAN + f"[*] Simulatie: Analyseren van PCAP-bestand {pcap_file} (echte analyse hier toevoegen)")
 
         elif choice == "3":
-            prompt = input(Fore.YELLOW + "Wat wil je aan AI vragen? ")
-            api_key = input(Fore.YELLOW + "Voer je OpenAI API-key in: ")
-            print(chatgpt_analysis(prompt, api_key))
+            show_kibana_dashboard()  # ✅ Kibana-dashboard openen zonder menu-herhaling
 
         elif choice == "4":
-            show_kibana_dashboard()
+            check_tools()
 
         elif choice == "5":
-            print(Fore.GREEN + "\n[INFO] Het programma wordt afgesloten...")
+            print(Fore.WHITE + "\n[INFO] Het programma wordt afgesloten...")
             break
 
         else:
             print(Fore.RED + "[ERROR] Ongeldige keuze. Probeer opnieuw.")
 
+        input(Fore.CYAN + "\nDruk op Enter om terug te keren naar het menu...")  # ✅ Pauze vóór herhaling
+
+
 if __name__ == "__main__":
     try:
-        main()
+        # Print de welkomstboodschap met hardcoded ASCII-art
+        # print_welcome_message()
+
+        print(Fore.CYAN + "Automatische OS-detectie...")
+        os_type = platform.system()
+        print(Fore.GREEN + f"Gedetecteerd besturingssysteem: {os_type}")
+
+        # Direct controleren of alles werkt
+        check_tools()
+
+        # Start het hoofdmenu
+        main_menu()
+    
     except KeyboardInterrupt:
         print(Fore.RED + "\n[INFO] Script onderbroken door gebruiker.")
         sys.exit(0)
+    
     except Exception as e:
         print(Fore.RED + f"[ERROR] Onverwachte fout: {e}")
         sys.exit(1)
