@@ -1,190 +1,179 @@
+from colorama import Fore, init
 from openai import AzureOpenAI
 import os
 import subprocess
+import json
+import tiktoken
 
-#PCAP_FILE = "download ratexe truncated.pcap"
-PCAP_FILE = "download ratexe.pcap"
-TEXT_FILE = "pcap_output.txt"
+
+init(autoreset=True)
+
 CHUNK_SIZE = 15000
 MAX_CHUNKS = 20
 text_loaded = False
 text_content = None
-file_path = "example.txt"
 
 class AI_bot:
     def __init__(self):
-        self.convoNmap = [{"role": "system", "content": "You know all about nmap and how it can be used on OT-networks without interruption"}]
-        self.convoPCAP = [{"role": "system", "content": "You are an cybersecurity expert in analyzing network traffic from PCAP files. You focus on malware and anomalies."}]
-        self.convoSuricata =[{"role": "system", "content": "You are an cybersecurity expert in analyzing network traffic from PCAP files, you as well have knowledge of Suricata."}]
         self.chunks = []
-        #self.chunksSuricata = []
-
         self.client = AzureOpenAI (
             azure_endpoint = os.getenv("AZURE_ENDPOINT"),
             api_key = os.getenv("API_KEY"),
             api_version = os.getenv("API_VERSION")
         )
 
-    # ---- Convert PCAP to Plain Text using tshark ----
-    def convert_pcap_to_txt(self, pcap_path, txt_output_path):
-        if not os.path.exists(pcap_path):
-            raise FileNotFoundError(f"❌ File not found: {pcap_path}")
+
+    def count_tokens_in_file(self, file_path: str) -> int:
+        model = "gpt-4o"
+        try:
+            with open(file_path, 'r', encoding='utf-8') as file:
+                text = file.read()
+        except Exception as e:
+            raise RuntimeError(f"Failed to read file: {e}")
 
         try:
-            result = subprocess.run(
-                ["tshark", "-r", pcap_path],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                check=True
-            )
+            encoding = tiktoken.encoding_for_model(model)
+        except KeyError:
+            encoding = tiktoken.get_encoding("cl100k_base")  # fallback encoding
 
-            with open(txt_output_path, "w") as f:
-                f.write(result.stdout)
+        tokens = encoding.encode(text)
+        return len(tokens)
 
-            print(f"✅ Converted {pcap_path} → {txt_output_path}")
 
-        except subprocess.CalledProcessError as e:
-            print(f"❌ Error converting PCAP: {e.stderr}")
-            exit(1)
-
-    def convert_txtfile_to_chunks(self):
-        with open(TEXT_FILE, "r", encoding="utf-8") as file:
+    def convert_txtfile_to_chunks(self, text_file_path):
+        with open(text_file_path, "r", encoding="utf-8") as file:
             text_content = file.read()
 
         self.chunks = [text_content[i:i + CHUNK_SIZE] for i in range(0, len(text_content), CHUNK_SIZE)]
         self.chunks = self.chunks[:MAX_CHUNKS]
 
-    def summarize_pcap(self):
+
+    # ------- Analyze & Summarize Interface -------
+    def summary_tool(self):
+        text_file_path = input("Which file would you like to analyze & summarize?\n")
+        if not os.path.exists(text_file_path):
+            raise FileNotFoundError(f"❌ File not found: {text_file_path}")
+ 
         # ---- Chop TXT File Into Chunks ----
-        self.convert_txtfile_to_chunks()
+        self.convert_txtfile_to_chunks(text_file_path)
+
         # ---- Summarize Each Chunk ----
         chunk_summaries = []
-        print("\n📄 Summarizing chunks...\n")
+        print(f"\n📄 Summarizing {len(self.chunks)} chunks...\n")
+
+
+        user_input = input("How technical would you like to your analysis to be?\n"
+                "1 = Expert\n" 
+                "2 = Moderate\n" 
+                "3 = Easy\n")
+
+        print("Your chosen input is: " + user_input + "\n")
+
+        match user_input:
+            case "1":
+                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who are experts in computer networking."})]
+            case "2":
+                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users with a moderate understanding of networking concepts."})]
+            case "3":
+                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who have no technical background in networking."})]
+
+
+        #convoSum = [{"role": "system", "content": "You are an cybersecurity expert in analyzing network traffic from PCAP files. You focus on malware and anomalies."}]
 
         for idx, chunk in enumerate(self.chunks, start=1):
-            self.convoPCAP.append({"role": "user", "content": f"Summarize part {idx} of a PCAP text log:\n{chunk}"})
+            convoSum.append({"role": "user", "content": f"Summarize part {idx} of a PCAP text log:\n{chunk}"})
             response = self.client.chat.completions.create(
                 model="gpt-4o",
-                messages=self.convoPCAP
+                messages=convoSum
             )
             summary = response.choices[0].message.content.strip()
-            self.convoPCAP.append({"role": "assistant", "content": summary})
+            convoSum.append({"role": "assistant", "content": summary})
             chunk_summaries.append(f"Summary of Part {idx}:\n{summary}")
-            print(f"✅ Chunk {idx} summarized.")
+            print(f"✅ Chunk {idx}/{len(self.chunks)} summarized.\n")
             print(summary)
 
         # ---- Request Final Summary ----
-        self.convoPCAP.append({"role": "user", "content": "Here are summaries of each part of a PCAP file:\n\n" + "\n\n".join(chunk_summaries)})
-        self.convoPCAP.append({"role": "user", "content": "Based on the above summaries, give a short high-level summary of this PCAP file."})
+        convoSum.append({"role": "user", "content": "Here are summaries of each part of a PCAP file:\n\n" + "\n\n".join(chunk_summaries)})
+        convoSum.append({"role": "user", "content": "Based on the above summaries, give a short high-level summary of this PCAP file."})
 
 
         final_response = self.client.chat.completions.create(
             model="gpt-4o",
-            messages=self.convoPCAP
+            messages=convoSum
         )
 
         final_summary = final_response.choices[0].message.content.strip()
-        self.convoPCAP.append({"role": "assistant", "content": final_summary})
+        convoSum.append({"role": "assistant", "content": final_summary})
 
         print("\n🧠 Final Summary:\n")
         print(final_summary + "\n")
 
-    # ------- Suricata Interface -------
-    def suricata_tool(self):
-        print("Suricata")
-        self.convert_txtfile_to_chunks()
-        convo = self.convoSuricata
-        suricataChunks = self.chunks
-        convo.insert(0, {
-            "role": "system", 
-            "content": "Context from multiple chunks of a file: " + "\n\n".join(suricataChunks)})
-        
+        print("Do you have any more questions?")
         while True:
             print("")
-            user_input = input("You: ")
+            print(Fore.CYAN + "You: ")
+            user_input = input()
             if user_input.lower() in ["quit", "break"]: break
-
-            convo.append({"role":"user", "content": user_input})
-            
-            chat = self.client.chat.completions.create(
-                model="gpt-4o",
-                messages=convo
-            )
-
-            answer = chat.choices[0].message.content.strip()
-            convo.append({"role": "assistant", "content": answer})
-            print(answer)
-
-
-    # ------- PCAP Interface -------
-    def summary_tool(self):
-        print("Your PCAP File will be summarized now")
-        self.summarize_pcap()
-
-        print("Do you have any more questions?\n")
-        while True:
-            print("")
-            user_input = input("You: ")
-            if user_input.lower() in ["quit", "break"]: break
-            self.convoPCAP.append({"role": "user", "content": user_input})
+            convoSum.append({"role": "user", "content": user_input})
 
             response2 = self.client.chat.completions.create(
             model="gpt-4o",
-            messages=self.convoPCAP
+            messages=convoSum
             )
 
             answer = response2.choices[0].message.content.strip()
-            self.convoPCAP.append({"role":  "assistant", "content": answer})
+            convoSum.append({"role":  "assistant", "content": answer})
             print(answer)
 
+   # ------- Suricata Interface -------
+    def suricata_tool(self):
+        text_file_path = input("Which txt file would you like to use for context?\n")
+        if not os.path.exists(text_file_path):
+            raise FileNotFoundError(f"❌ File not found: {text_file_path}")
+        
+        with open(text_file_path, "r") as file:
+            text_file = file.read()
 
-    # ---------- NMAP Interface ----------- #
-    def nmap_tool(self):
-        print("You have started a conversation with an AI specialized in Nmap")
-        convo = self.convoNmap   
-
+        convoSuricata =[{"role": "system", "content": "You are a cybersecurity expert specializing in analyzing network traffic from PCAP and JSON files. You also have in-depth knowledge of Suricata and aim to assist users in writing and refining Suricata detection rules."}]
+        convoSuricata.insert(0, {
+            "role": "system", 
+            "content": f"Context from from file: {text_file}"})
+        
         while True:
             print("")
-            user_input = input("You: ")
+            print(Fore.CYAN + "You: ")
+            user_input = input()
             if user_input.lower() in ["quit", "break"]: break
 
-            convo.append({"role":"user", "content": user_input})
+            convoSuricata.append({"role":"user", "content": user_input})
             
             chat = self.client.chat.completions.create(
                 model="gpt-4o",
-                messages=convo
+                messages=convoSuricata
             )
 
             answer = chat.choices[0].message.content.strip()
-            convo.append({"role": "assistant", "content": answer})
+            convoSuricata.append({"role": "assistant", "content": answer})
             print(answer)
 
+    # ---------- NMAP Interface ----------- #
+    def nmap_tool(self):
+        print("You are now speaking with an AI assistant specialized in Nmap scanning and operational technology (OT) networks.")
+        convoNmap = [{"role": "system", "content": "You have expert knowledge of Nmap and understand how to safely use it on operational technology (OT) networks without causing disruption."}]
 
-#     # ----------- MENU ------------- #
-#     def main_menu(self):
-#          while True:
-#             print("\nMaak een keuze\n")
-#             print("1 = nmap")
-#             print("2 = summary pcap")
-#             print("3 = suricata rules based on pcap")
-#             print("4 == quit")
-#             choice=input()
+        while True:
+            print("")
+            print(Fore.CYAN + "You: ")
+            user_input = input()
+            if user_input.lower() in ["quit", "break"]: break
+
+            convoNmap.append({"role":"user", "content": user_input})
             
+            chat = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=convoNmap
+            )
 
-#             if choice == "1": self.nmap_tool()
-#             if choice == "2": self.summary_tool()
-#             if choice == "3": self.suricata_tool()
-#             if choice == "4": break
-
-
-
-# if __name__ == "__main__":
-#     nmap = Nmap()
-#     nmap.convert_pcap_to_txt(PCAP_FILE, TEXT_FILE)
-#     nmap.main_menu()
-
-
-
-
-
+            answer = chat.choices[0].message.content.strip()
+            convoNmap.append({"role": "assistant", "content": answer})
+            print(answer)
