@@ -1,5 +1,6 @@
 from colorama import Fore, init
 from openai import AzureOpenAI
+from datetime import datetime
 import os
 import subprocess
 import json
@@ -48,82 +49,174 @@ class AI_bot:
         self.chunks = self.chunks[:MAX_CHUNKS]
 
 
+
+
     # ------- Analyze & Summarize Interface -------
     def summary_tool(self):
         text_file_path = input("Which file would you like to analyze & summarize?\n")
         if not os.path.exists(text_file_path):
             raise FileNotFoundError(f"❌ File not found: {text_file_path}")
- 
-        # ---- Chop TXT File Into Chunks ----
-        self.convert_txtfile_to_chunks(text_file_path)
 
-        # ---- Summarize Each Chunk ----
-        chunk_summaries = []
-        print(f"\n📄 Summarizing {len(self.chunks)} chunks...\n")
+        # ---- Setup Logging ----
+        log_file_path = f"summary_log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        with open(log_file_path, "w", encoding="utf-8") as log_file:
 
+            # ---- Chop TXT File Into Chunks ----
+            self.convert_txtfile_to_chunks(text_file_path)
 
-        user_input = input("How technical would you like to your analysis to be?\n"
-                "1 = Expert\n" 
-                "2 = Moderate\n" 
-                "3 = Easy\n")
+            # ---- Summarize Each Chunk ----
+            chunk_summaries = []
+            print(f"\n📄 Summarizing {len(self.chunks)} chunks...\n")
 
-        print("Your chosen input is: " + user_input + "\n")
+            user_input = input("What level of technical detail do you prefer in the analysis?\n"
+                            "1 = Expert\n" 
+                            "2 = Moderate\n" 
+                            "3 = Easy\n")
 
-        match user_input:
-            case "1":
-                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who are experts in computer networking."})]
-            case "2":
-                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users with a moderate understanding of networking concepts."})]
-            case "3":
-                convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who have no technical background in networking."})]
+            print("Your chosen input is: " + user_input + "\n")
 
+            match user_input:
+                case "1":
+                    convoSum = [{"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who are experts in computer networking."}]
+                case "2":
+                    convoSum = [{"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users with a moderate understanding of networking concepts."}]
+                case "3":
+                    convoSum = [{"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who have no technical background in networking."}]
 
-        #convoSum = [{"role": "system", "content": "You are an cybersecurity expert in analyzing network traffic from PCAP files. You focus on malware and anomalies."}]
+            for idx, chunk in enumerate(self.chunks, start=1):
+                convoSum.append({"role": "user", "content": f"Summarize part {idx} of a PCAP text log:\n{chunk}"})
+                response = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=convoSum
+                )
+                summary = response.choices[0].message.content.strip()
+                convoSum.append({"role": "assistant", "content": summary})
+                chunk_summaries.append(f"Summary of Part {idx}:\n{summary}")
+                print(f"✅ Chunk {idx}/{len(self.chunks)} summarized.\n")
+                print(summary)
 
-        for idx, chunk in enumerate(self.chunks, start=1):
-            convoSum.append({"role": "user", "content": f"Summarize part {idx} of a PCAP text log:\n{chunk}"})
-            response = self.client.chat.completions.create(
+                # ---- Log summary ----
+                log_file.write(f"=== Chunk {idx} Summary ===\n{summary}\n\n")
+
+            # ---- Request Final Summary ----
+            convoSum.append({"role": "user", "content": "Here are summaries of each part of a PCAP file:\n\n" + "\n\n".join(chunk_summaries)})
+            convoSum.append({"role": "user", "content": "Based on the above summaries, give a short high-level summary of this PCAP file."})
+
+            final_response = self.client.chat.completions.create(
                 model="gpt-4o",
                 messages=convoSum
             )
-            summary = response.choices[0].message.content.strip()
-            convoSum.append({"role": "assistant", "content": summary})
-            chunk_summaries.append(f"Summary of Part {idx}:\n{summary}")
-            print(f"✅ Chunk {idx}/{len(self.chunks)} summarized.\n")
-            print(summary)
 
-        # ---- Request Final Summary ----
-        convoSum.append({"role": "user", "content": "Here are summaries of each part of a PCAP file:\n\n" + "\n\n".join(chunk_summaries)})
-        convoSum.append({"role": "user", "content": "Based on the above summaries, give a short high-level summary of this PCAP file."})
+            final_summary = final_response.choices[0].message.content.strip()
+            convoSum.append({"role": "assistant", "content": final_summary})
+
+            print("\n🧠 Final Summary:\n")
+            print(final_summary + "\n")
+
+            # ---- Log final summary ----
+            log_file.write("=== Final Summary ===\n" + final_summary + "\n\n")
+
+            print("Do you have any more questions?")
+            while True:
+                print("")
+                print(Fore.CYAN + "You: ")
+                user_input = input()
+                if user_input.lower() in ["quit", "break"]:
+                    break
+                convoSum.append({"role": "user", "content": user_input})
+
+                response2 = self.client.chat.completions.create(
+                    model="gpt-4o",
+                    messages=convoSum
+                )
+
+                answer = response2.choices[0].message.content.strip()
+                convoSum.append({"role": "assistant", "content": answer})
+                print(answer)
+
+                # ---- Log follow-up answer ----
+                log_file.write(f"=== Q&A ===\nUser: {user_input}\nAI: {answer}\n\n")
+
+        print(f"\n📝 All AI responses have been logged to: {log_file_path}")
 
 
-        final_response = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=convoSum
-        )
 
-        final_summary = final_response.choices[0].message.content.strip()
-        convoSum.append({"role": "assistant", "content": final_summary})
+    # # ------- Analyze & Summarize Interface -------
+    # def summary_tool(self):
+    #     text_file_path = input("Which file would you like to analyze & summarize?\n")
+    #     if not os.path.exists(text_file_path):
+    #         raise FileNotFoundError(f"❌ File not found: {text_file_path}")
+ 
+    #     # ---- Chop TXT File Into Chunks ----
+    #     self.convert_txtfile_to_chunks(text_file_path)
 
-        print("\n🧠 Final Summary:\n")
-        print(final_summary + "\n")
+    #     # ---- Summarize Each Chunk ----
+    #     chunk_summaries = []
+    #     print(f"\n📄 Summarizing {len(self.chunks)} chunks...\n")
 
-        print("Do you have any more questions?")
-        while True:
-            print("")
-            print(Fore.CYAN + "You: ")
-            user_input = input()
-            if user_input.lower() in ["quit", "break"]: break
-            convoSum.append({"role": "user", "content": user_input})
 
-            response2 = self.client.chat.completions.create(
-            model="gpt-4o",
-            messages=convoSum
-            )
+    #     user_input = input("What level of technical detail do you prefer in the analysis?\n"
+    #             "1 = Expert\n" 
+    #             "2 = Moderate\n" 
+    #             "3 = Easy\n")
 
-            answer = response2.choices[0].message.content.strip()
-            convoSum.append({"role":  "assistant", "content": answer})
-            print(answer)
+    #     print("Your chosen input is: " + user_input + "\n")
+
+    #     match user_input:
+    #         case "1":
+    #             convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who are experts in computer networking."})]
+    #         case "2":
+    #             convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users with a moderate understanding of networking concepts."})]
+    #         case "3":
+    #             convoSum = [({"role": "user", "content": "You are a cybersecurity expert in analyzing network traffic. You are assisting users who have no technical background in networking."})]
+
+
+    #     #convoSum = [{"role": "system", "content": "You are an cybersecurity expert in analyzing network traffic from PCAP files. You focus on malware and anomalies."}]
+
+    #     for idx, chunk in enumerate(self.chunks, start=1):
+    #         convoSum.append({"role": "user", "content": f"Summarize part {idx} of a PCAP text log:\n{chunk}"})
+    #         response = self.client.chat.completions.create(
+    #             model="gpt-4o",
+    #             messages=convoSum
+    #         )
+    #         summary = response.choices[0].message.content.strip()
+    #         convoSum.append({"role": "assistant", "content": summary})
+    #         chunk_summaries.append(f"Summary of Part {idx}:\n{summary}")
+    #         print(f"✅ Chunk {idx}/{len(self.chunks)} summarized.\n")
+    #         print(summary)
+
+    #     # ---- Request Final Summary ----
+    #     convoSum.append({"role": "user", "content": "Here are summaries of each part of a PCAP file:\n\n" + "\n\n".join(chunk_summaries)})
+    #     convoSum.append({"role": "user", "content": "Based on the above summaries, give a short high-level summary of this PCAP file."})
+
+
+    #     final_response = self.client.chat.completions.create(
+    #         model="gpt-4o",
+    #         messages=convoSum
+    #     )
+
+    #     final_summary = final_response.choices[0].message.content.strip()
+    #     convoSum.append({"role": "assistant", "content": final_summary})
+
+    #     print("\n🧠 Final Summary:\n")
+    #     print(final_summary + "\n")
+
+    #     print("Do you have any more questions?")
+    #     while True:
+    #         print("")
+    #         print(Fore.CYAN + "You: ")
+    #         user_input = input()
+    #         if user_input.lower() in ["quit", "break"]: break
+    #         convoSum.append({"role": "user", "content": user_input})
+
+    #         response2 = self.client.chat.completions.create(
+    #         model="gpt-4o",
+    #         messages=convoSum
+    #         )
+
+    #         answer = response2.choices[0].message.content.strip()
+    #         convoSum.append({"role":  "assistant", "content": answer})
+    #         print(answer)
 
    # ------- Suricata Interface -------
     def suricata_tool(self):
